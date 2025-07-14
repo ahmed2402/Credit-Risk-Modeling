@@ -1,0 +1,132 @@
+import streamlit as st
+import pandas as pd
+import joblib
+
+# This MUST be the first Streamlit command
+st.set_page_config(page_title="Loan Prediction System", layout="wide")
+
+# Load artifacts
+@st.cache_resource
+def load_artifacts():
+    return {
+        'catboost': joblib.load('catboost_model.pkl'),
+        'preprocessor': joblib.load('preprocessor.pkl')
+    }
+
+artifacts = load_artifacts()
+catboost_model = artifacts['catboost']
+preprocessor = artifacts['preprocessor']
+
+def main():
+    st.title("Loan Approval Prediction System")
+    st.write("This application predicts whether a loan application will be approved or rejected.")
+
+    with st.sidebar:
+        st.header("Applicant Information")
+        
+        # Personal Information
+        st.subheader("Personal Details")
+        person_age = st.number_input("Age", min_value=18, max_value=100, value=30)
+        person_gender = st.selectbox("Gender", ["Female", "Male"])
+        person_education = st.selectbox(
+            "Education Level", 
+            ["High School", "Associate", "Bachelor", "Master", "Doctorate"]
+        )
+        
+        # Financial Information
+        st.subheader("Financial Details")
+        person_income = st.number_input("Annual Income ($)", min_value=0, value=50000)
+        person_emp_exp = st.number_input("Employment Experience (years)", min_value=0, value=5)
+        credit_score = st.slider("Credit Score", 300, 850, 700)
+        cb_person_cred_hist_length = st.number_input("Credit History Length (years)", min_value=0, value=5)
+        previous_loan_defaults_on_file = st.selectbox("Previous Loan Defaults", ["No", "Yes"])
+        
+        # Loan Information
+        st.subheader("Loan Details")
+        loan_amnt = st.number_input("Loan Amount ($)", min_value=100, value=20000)
+        loan_int_rate = st.slider("Interest Rate (%)", 0.0, 20.0, 7.5)
+        loan_percent_income = st.slider("Loan Amount/Income Ratio", 0.0, 1.0, 0.3)
+        loan_intent = st.selectbox(
+            "Loan Purpose", 
+            ["DEBTCONSOLIDATION", "EDUCATION", "HOMEIMPROVEMENT", 
+             "MEDICAL", "PERSONAL", "VENTURE"]
+        )
+        person_home_ownership = st.selectbox(
+            "Home Ownership", 
+            ["MORTGAGE", "OTHER", "OWN", "RENT"]
+        )
+    
+    # Create input dataframe
+    input_data = pd.DataFrame({
+        'person_age': [person_age],
+        'person_income': [person_income],
+        'person_emp_exp': [person_emp_exp],
+        'loan_amnt': [loan_amnt],
+        'loan_int_rate': [loan_int_rate],
+        'loan_percent_income': [loan_percent_income],
+        'cb_person_cred_hist_length': [cb_person_cred_hist_length],
+        'credit_score': [credit_score],
+        'person_gender': [1 if person_gender == "Male" else 0],
+        'person_education': [
+            0 if person_education == "High School" 
+            else 1 if person_education == "Associate" 
+            else 2 if person_education == "Bachelor" 
+            else 3 if person_education == "Master" 
+            else 4
+        ],
+        'previous_loan_defaults_on_file': [1 if previous_loan_defaults_on_file == "Yes" else 0],
+        f'person_home_ownership_{person_home_ownership}': [1],
+        f'loan_intent_{loan_intent}': [1]
+    })
+    
+    # Add remaining columns with 0 values
+    home_ownership_cols = ['MORTGAGE', 'OTHER', 'OWN', 'RENT']
+    intent_cols = ['DEBTCONSOLIDATION', 'EDUCATION', 'HOMEIMPROVEMENT', 'MEDICAL', 'PERSONAL', 'VENTURE']
+    
+    for col in home_ownership_cols:
+        if f'person_home_ownership_{col}' not in input_data.columns:
+            input_data[f'person_home_ownership_{col}'] = 0
+            
+    for col in intent_cols:
+        if f'loan_intent_{col}' not in input_data.columns:
+            input_data[f'loan_intent_{col}'] = 0
+    
+    # # Ensure correct column order
+    # expected_columns = [
+    #     'person_age', 'person_income', 'person_emp_exp', 'loan_amnt',
+    #     'loan_int_rate', 'loan_percent_income', 'cb_person_cred_hist_length',
+    #     'credit_score', 'person_gender', 'person_education',
+    #     'previous_loan_defaults_on_file', 'person_home_ownership_MORTGAGE',
+    #     'person_home_ownership_OTHER', 'person_home_ownership_OWN',
+    #     'person_home_ownership_RENT', 'loan_intent_DEBTCONSOLIDATION',
+    #     'loan_intent_EDUCATION', 'loan_intent_HOMEIMPROVEMENT',
+    #     'loan_intent_MEDICAL', 'loan_intent_PERSONAL', 'loan_intent_VENTURE'
+    # ]
+    
+    continuous_cols = ['person_income', 'person_emp_exp', 'loan_amnt', 'loan_int_rate',
+       'loan_percent_income', 'cb_person_cred_hist_length', 'credit_score']
+    input_data[continuous_cols] = artifacts['preprocessor'].transform(input_data[continuous_cols])
+    
+    if st.checkbox("Show raw input data"):
+        st.write(input_data)
+    
+    if st.button("Predict Loan Approval"):
+        try:
+            # processed_data = preprocessor.transform(input_data)
+            prediction = catboost_model.predict(input_data)[0]
+            prediction_proba = catboost_model.predict_proba(input_data)[0]
+            
+            st.subheader("Prediction Results")
+            if prediction == 1:
+                st.success("✅ Loan Approved")
+            else:
+                st.error("❌ Loan Rejected")
+            
+            st.write(f"Approval Probability: {prediction_proba[1]*100:.2f}%")
+            st.write(f"Rejection Probability: {prediction_proba[0]*100:.2f}%")
+            
+        except Exception as e:
+            st.error(f"An error occurred during prediction: {str(e)}")
+
+if __name__ == "__main__":
+    main()
