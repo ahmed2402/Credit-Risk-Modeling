@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 import joblib
+import numpy as np
+from sklearn.preprocessing import StandardScaler, QuantileTransformer
+from sklearn.compose import ColumnTransformer
 
 # This MUST be the first Streamlit command
 st.set_page_config(page_title="Loan Prediction System", layout="wide")
@@ -9,13 +12,21 @@ st.set_page_config(page_title="Loan Prediction System", layout="wide")
 @st.cache_resource
 def load_artifacts():
     return {
-        'catboost': joblib.load('catboost_model.pkl'),
-        'preprocessor': joblib.load('preprocessor.pkl')
+        'catboost': joblib.load('catboost_model.pkl')
     }
 
 artifacts = load_artifacts()
 catboost_model = artifacts['catboost']
-preprocessor = artifacts['preprocessor']
+
+# Define the preprocessor with the correct continuous columns
+continuous_cols = ['person_income', 'person_emp_exp', 'loan_amnt', 
+                  'loan_int_rate', 'loan_percent_income', 
+                  'cb_person_cred_hist_length', 'credit_score']
+
+preprocessor = ColumnTransformer([
+    ('num', StandardScaler(), [col for col in continuous_cols if col != 'person_income']),
+    ('qt', QuantileTransformer(output_distribution='normal'), ['person_income'])
+])
 
 def main():
     st.title("Loan Approval Prediction System")
@@ -56,63 +67,50 @@ def main():
             ["MORTGAGE", "OTHER", "OWN", "RENT"]
         )
     
-    # Create input dataframe
-    input_data = pd.DataFrame({
-        'person_age': [person_age],
-        'person_income': [person_income],
-        'person_emp_exp': [person_emp_exp],
-        'loan_amnt': [loan_amnt],
-        'loan_int_rate': [loan_int_rate],
-        'loan_percent_income': [loan_percent_income],
-        'cb_person_cred_hist_length': [cb_person_cred_hist_length],
-        'credit_score': [credit_score],
-        'person_gender': [1 if person_gender == "Male" else 0],
-        'person_education': [
-            0 if person_education == "High School" 
-            else 1 if person_education == "Associate" 
-            else 2 if person_education == "Bachelor" 
-            else 3 if person_education == "Master" 
-            else 4
-        ],
-        'previous_loan_defaults_on_file': [1 if previous_loan_defaults_on_file == "Yes" else 0],
-        f'person_home_ownership_{person_home_ownership}': [1],
-        f'loan_intent_{loan_intent}': [1]
-    })
+    # Create input dataframe with correct column order
+    input_data = pd.DataFrame(index=[0], columns=[
+        'person_age', 'person_gender', 'person_education', 'person_income',
+        'person_emp_exp', 'loan_amnt', 'loan_int_rate', 'loan_percent_income',
+        'cb_person_cred_hist_length', 'credit_score',
+        'previous_loan_defaults_on_file', 'person_home_ownership_MORTGAGE',
+        'person_home_ownership_OTHER', 'person_home_ownership_OWN',
+        'person_home_ownership_RENT', 'loan_intent_DEBTCONSOLIDATION',
+        'loan_intent_EDUCATION', 'loan_intent_HOMEIMPROVEMENT',
+        'loan_intent_MEDICAL', 'loan_intent_PERSONAL', 'loan_intent_VENTURE'
+    ])
     
-    # Add remaining columns with 0 values
-    home_ownership_cols = ['MORTGAGE', 'OTHER', 'OWN', 'RENT']
-    intent_cols = ['DEBTCONSOLIDATION', 'EDUCATION', 'HOMEIMPROVEMENT', 'MEDICAL', 'PERSONAL', 'VENTURE']
+    # Fill in the values - now they'll show up properly
+    input_data['person_age'] = person_age
+    input_data['person_gender'] = 1 if person_gender == "Male" else 0
+    input_data['person_education'] = [
+        0 if person_education == "High School" 
+        else 1 if person_education == "Associate" 
+        else 2 if person_education == "Bachelor" 
+        else 3 if person_education == "Master" 
+        else 4
+    ][0]
+    input_data['person_income'] = person_income
+    input_data['person_emp_exp'] = person_emp_exp
+    input_data['loan_amnt'] = loan_amnt
+    input_data['loan_int_rate'] = loan_int_rate
+    input_data['loan_percent_income'] = loan_percent_income
+    input_data['cb_person_cred_hist_length'] = cb_person_cred_hist_length
+    input_data['credit_score'] = credit_score
+    input_data['previous_loan_defaults_on_file'] = 1 if previous_loan_defaults_on_file == "Yes" else 0
     
-    for col in home_ownership_cols:
-        if f'person_home_ownership_{col}' not in input_data.columns:
-            input_data[f'person_home_ownership_{col}'] = 0
-            
-    for col in intent_cols:
-        if f'loan_intent_{col}' not in input_data.columns:
-            input_data[f'loan_intent_{col}'] = 0
+    # Properly handle one-hot encoded columns
+    for col in ['MORTGAGE', 'OTHER', 'OWN', 'RENT']:
+        input_data[f'person_home_ownership_{col}'] = 1 if person_home_ownership == col else 0
     
-    # # Ensure correct column order
-    # expected_columns = [
-    #     'person_age', 'person_income', 'person_emp_exp', 'loan_amnt',
-    #     'loan_int_rate', 'loan_percent_income', 'cb_person_cred_hist_length',
-    #     'credit_score', 'person_gender', 'person_education',
-    #     'previous_loan_defaults_on_file', 'person_home_ownership_MORTGAGE',
-    #     'person_home_ownership_OTHER', 'person_home_ownership_OWN',
-    #     'person_home_ownership_RENT', 'loan_intent_DEBTCONSOLIDATION',
-    #     'loan_intent_EDUCATION', 'loan_intent_HOMEIMPROVEMENT',
-    #     'loan_intent_MEDICAL', 'loan_intent_PERSONAL', 'loan_intent_VENTURE'
-    # ]
+    for col in ['DEBTCONSOLIDATION', 'EDUCATION', 'HOMEIMPROVEMENT', 'MEDICAL', 'PERSONAL', 'VENTURE']:
+        input_data[f'loan_intent_{col}'] = 1 if loan_intent == col else 0
     
-    continuous_cols = ['person_income', 'person_emp_exp', 'loan_amnt', 'loan_int_rate',
-       'loan_percent_income', 'cb_person_cred_hist_length', 'credit_score']
-    input_data[continuous_cols] = artifacts['preprocessor'].transform(input_data[continuous_cols])
-    
+    # Now the display will show correct values
     if st.checkbox("Show raw input data"):
         st.write(input_data)
     
     if st.button("Predict Loan Approval"):
         try:
-            # processed_data = preprocessor.transform(input_data)
             prediction = catboost_model.predict(input_data)[0]
             prediction_proba = catboost_model.predict_proba(input_data)[0]
             
@@ -126,7 +124,7 @@ def main():
             st.write(f"Rejection Probability: {prediction_proba[0]*100:.2f}%")
             
         except Exception as e:
-            st.error(f"An error occurred during prediction: {str(e)}")
+            st.error(f"Prediction error: {str(e)}")
 
 if __name__ == "__main__":
     main()
