@@ -8,25 +8,26 @@ from sklearn.compose import ColumnTransformer
 # This MUST be the first Streamlit command
 st.set_page_config(page_title="Loan Prediction System", layout="wide")
 
-# Load artifacts
-@st.cache_resource
-def load_artifacts():
-    return {
-        'catboost': joblib.load('catboost_model.pkl')
-    }
-
-artifacts = load_artifacts()
-catboost_model = artifacts['catboost']
-
-# Define the preprocessor with the correct continuous columns
 continuous_cols = ['person_income', 'person_emp_exp', 'loan_amnt', 
                   'loan_int_rate', 'loan_percent_income', 
                   'cb_person_cred_hist_length', 'credit_score']
 
-preprocessor = ColumnTransformer([
-    ('num', StandardScaler(), [col for col in continuous_cols if col != 'person_income']),
-    ('qt', QuantileTransformer(output_distribution='normal'), ['person_income'])
-])
+# Load artifacts
+@st.cache_resource
+def load_artifacts():
+    return {
+        'catboost': joblib.load('catboost_model.pkl'),
+        'preprocessor': joblib.load('preprocessor.pkl') 
+    }
+
+artifacts = load_artifacts()
+catboost_model = artifacts['catboost']
+preprocessor = artifacts['preprocessor'] 
+
+# preprocessor = ColumnTransformer([
+#     ('num', StandardScaler(),continuous_cols),
+#     ('qt', QuantileTransformer(output_distribution='normal'), ['person_income'])
+# ])
 
 def main():
     st.title("Loan Approval Prediction System")
@@ -105,9 +106,16 @@ def main():
     for col in ['DEBTCONSOLIDATION', 'EDUCATION', 'HOMEIMPROVEMENT', 'MEDICAL', 'PERSONAL', 'VENTURE']:
         input_data[f'loan_intent_{col}'] = 1 if loan_intent == col else 0
     
+    try:
+        # Transform only the continuous features
+        input_data[continuous_cols] = preprocessor.transform(input_data[continuous_cols])
+    except Exception as e:
+        st.error(f"Preprocessing error: {str(e)}")
+        return
+
     # Now the display will show correct values
     if st.checkbox("Show raw input data"):
-        st.write(input_data)
+         st.write("Preprocessed data:", input_data)
     
     if st.button("Predict Loan Approval"):
         try:
