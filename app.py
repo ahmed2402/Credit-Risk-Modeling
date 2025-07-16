@@ -17,14 +17,15 @@ st.set_page_config(page_title="Loan Prediction System", layout="wide")
 @st.cache_resource
 def load_artifacts():
     return {
-        'catboost': joblib.load('catboost_model.pkl'),
-        # 'scaler': joblib.load('scaler.pkl'),
-        # 'qt' : joblib.load('quantile_transformer.pkl')
+        'xgboost': joblib.load('xgbboost_model.pkl'),
+        'scaler': joblib.load('scaler.pkl'),
+        'qt' : joblib.load('quantile_transformer.pkl')
     }
 
 artifacts = load_artifacts()
-catboost_model = artifacts['catboost']
-
+xgboost_model = artifacts['xgboost']
+# scaler = artifacts['scaler']
+# qt = artifacts['qt']
 
 def main():
     st.title("Loan Approval Prediction System")
@@ -111,15 +112,15 @@ def main():
     try:
 
         # At app startup, load representative training data to fit scalers
-        train_data = pd.read_csv('./datasets/loan_data.csv')
-        original_values = input_data[continuous_cols].copy()
+        train_data = pd.read_csv('loan2.csv')
+        original_values = input_data.copy()
 # Fit scalers once
         scaler = StandardScaler().fit(train_data[continuous_cols])
         qt = QuantileTransformer(output_distribution='normal').fit(train_data[['person_income']])
 
 # Then transform new inputs using these fitted scalers
-        input_data[continuous_cols] = scaler.transform(input_data[continuous_cols])
         input_data['person_income'] = qt.transform(input_data[['person_income']])
+        input_data[continuous_cols] = scaler.transform(input_data[continuous_cols])
     
     # Debug output
         print("\nOriginal Values:")
@@ -139,8 +140,8 @@ def main():
     
     if st.button("Predict Loan Approval"):
         try:
-            prediction = catboost_model.predict(input_data)[0]
-            prediction_proba = catboost_model.predict_proba(input_data)[0]
+            prediction = xgboost_model.predict(input_data)[0]
+            prediction_proba = xgboost_model.predict_proba(input_data)[0]
             
             st.subheader("Prediction Results")
             if prediction == 1:
