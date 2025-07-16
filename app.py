@@ -17,13 +17,16 @@ st.set_page_config(page_title="Loan Prediction System", layout="wide")
 @st.cache_resource
 def load_artifacts():
     return {
-        'xgboost': joblib.load('xgbboost_model.pkl'),
-        'scaler': joblib.load('scaler.pkl'),
-        'qt' : joblib.load('quantile_transformer.pkl')
+        'xgboost': joblib.load('./models/xgboost_model.pkl'),
+        'scaler': joblib.load('./models/scaler.pkl'),
+        'qt' : joblib.load('./models/quantile_transformer.pkl'),
+        'pycaret' : joblib.load('./models/best_model.pkl')
     }
 
 artifacts = load_artifacts()
 xgboost_model = artifacts['xgboost']
+pyCaret = artifacts['pycaret']
+print("Model expects features:", pyCaret.feature_names_)
 # scaler = artifacts['scaler']
 # qt = artifacts['qt']
 
@@ -45,7 +48,7 @@ def main():
         
         # Financial Information
         st.subheader("Financial Details")
-        person_income = st.number_input("Annual Income ($)", min_value=0, value=50000)
+        person_income = st.number_input("Annual Income ($)", min_value=0, value=500000)
         person_emp_exp = st.number_input("Employment Experience (years)", min_value=0, value=5)
         credit_score = st.slider("Credit Score", 300, 850, 700)
         cb_person_cred_hist_length = st.number_input("Credit History Length (years)", min_value=0, value=5)
@@ -112,21 +115,22 @@ def main():
     try:
 
         # At app startup, load representative training data to fit scalers
-        train_data = pd.read_csv('loan2.csv')
+        train_data = pd.read_csv('./datasets/loan2.csv')
+        train_data = train_data.drop('Unnamed: 0', axis=1)
         original_values = input_data.copy()
 # Fit scalers once
         scaler = StandardScaler().fit(train_data[continuous_cols])
         qt = QuantileTransformer(output_distribution='normal').fit(train_data[['person_income']])
 
 # Then transform new inputs using these fitted scalers
-        input_data['person_income'] = qt.transform(input_data[['person_income']])
         input_data[continuous_cols] = scaler.transform(input_data[continuous_cols])
+        input_data['person_income'] = qt.transform(input_data[['person_income']])
     
     # Debug output
-        print("\nOriginal Values:")
-        print(original_values.to_string())
-        print("\nTransformed Values:")
-        print(input_data[continuous_cols].to_string())
+        # print("\nOriginal Values:")
+        # print(original_values.to_string())
+        # print("\nTransformed Values:")
+        # print(input_data[continuous_cols].to_string())
     
         if st.checkbox("Show raw input data"):
             st.write("Original Values:")
@@ -138,22 +142,45 @@ def main():
         st.error(f"Transformation error: {str(e)}")
         return
     
-    if st.button("Predict Loan Approval"):
-        try:
-            prediction = xgboost_model.predict(input_data)[0]
-            prediction_proba = xgboost_model.predict_proba(input_data)[0]
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+
+    with col1:  
+        if st.button("Predict with XGBoost", help="Make prediction using XGBoost model"):
+            try:
+                prediction = xgboost_model.predict(input_data)[0]
+                prediction_proba = xgboost_model.predict_proba(input_data)[0]
             
-            st.subheader("Prediction Results")
-            if prediction == 1:
-                st.success("✅ Loan Approved")
-            else:
-                st.error("❌ Loan Rejected")
+                st.subheader("XGBoost Prediction Results")
+                if prediction == 1:
+                    st.success("✅ Loan Approved")
+                else:
+                    st.error("❌ Loan Rejected")
             
-            st.write(f"Approval Probability: {prediction_proba[1]*100:.2f}%")
-            st.write(f"Rejection Probability: {prediction_proba[0]*100:.2f}%")
+                st.metric("Approval Probability", f"{prediction_proba[1]*100:.2f}%")
+                st.metric("Rejection Probability", f"{prediction_proba[0]*100:.2f}%")
             
-        except Exception as e:
-            st.error(f"Prediction error: {str(e)}")
+            except Exception as e:
+                st.error(f"XGBoost prediction error: {str(e)}")
+
+    with col2:
+        if st.button("Predict with PyCaret", help="Make prediction using PyCaret model"):
+            try:
+                prediction = pyCaret.predict(input_data)[0]
+                prediction_proba = pyCaret.predict_proba(input_data)[0]
+            
+                st.subheader("PyCaret Prediction Results")
+                if prediction == 1:
+                    st.success("✅ Loan Approved")
+                else:
+                    st.error("❌ Loan Rejected")
+        
+            
+                st.metric("Approval Probability", f"{prediction_proba[1]*100:.2f}%")
+                st.metric("Rejection Probability", f"{prediction_proba[0]*100:.2f}%")
+            
+            except Exception as e:
+                st.error(f"PyCaret prediction error: {str(e)}")
 
 if __name__ == "__main__":
     main()
