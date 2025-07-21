@@ -1,188 +1,150 @@
 import streamlit as st
-import pandas as pd
-# Set pandas display options to show all columns
-pd.set_option('display.max_columns', None)
-pd.set_option('display.width', None)
-pd.set_option('display.max_colwidth', None)
-import joblib
 import numpy as np
-from sklearn.preprocessing import StandardScaler, QuantileTransformer
-from sklearn.compose import ColumnTransformer
+import pandas as pd
+import pickle
+from pathlib import Path
 
-# This MUST be the first Streamlit command
-st.set_page_config(page_title="Loan Prediction System", layout="wide")
+# Load models and transformers
+MODEL_PATH = 'models/xgb_model.pkl'
+SCALER_PATH = 'models/scaler.pkl'
+QT_PATH = 'models/quantile_transformer.pkl'
 
+with open(MODEL_PATH, 'rb') as f:
+    model = pickle.load(f)
+with open(SCALER_PATH, 'rb') as f:
+    scaler = pickle.load(f)
+with open(QT_PATH, 'rb') as f:
+    qt = pickle.load(f)
 
-# Load artifacts
-@st.cache_resource
-def load_artifacts():
-    return {
-        'xgboost': joblib.load('./models/xgboost_model.pkl'),
-        'scaler': joblib.load('./models/scaler.pkl'),
-        'qt' : joblib.load('./models/quantile_transformer.pkl'),
-        'pycaret' : joblib.load('./models/best_model.pkl')
+# Feature columns as per X.csv
+feature_names = [
+    'person_age', 'person_gender', 'person_education', 'person_income',
+    'person_emp_exp', 'loan_amnt', 'loan_int_rate', 'loan_percent_income',
+    'cb_person_cred_hist_length', 'credit_score',
+    'previous_loan_defaults_on_file', 'person_home_ownership_MORTGAGE',
+    'person_home_ownership_OTHER', 'person_home_ownership_OWN',
+    'person_home_ownership_RENT', 'loan_intent_DEBTCONSOLIDATION',
+    'loan_intent_EDUCATION', 'loan_intent_HOMEIMPROVEMENT',
+    'loan_intent_MEDICAL', 'loan_intent_PERSONAL', 'loan_intent_VENTURE'
+]
+
+# UI for original (raw) input
+st.title('Loan Approval Prediction')
+
+with st.sidebar:
+    st.header('Enter applicant details:')
+    person_age = st.number_input('Age', min_value=18, max_value=100, value=30)
+    person_gender = st.selectbox('Gender', ['male', 'female'])
+    person_education = st.selectbox('Education', ['High School', 'Associate', 'Bachelor', 'Master', 'Doctorate'])
+    person_income = st.number_input('Annual Income', min_value=0, value=50000)
+    person_emp_exp = st.number_input('Years of Employment Experience', min_value=0, max_value=80, value=5)
+    person_home_ownership = st.selectbox('Home Ownership', ['RENT', 'OWN', 'MORTGAGE', 'OTHER'])
+    loan_amnt = st.number_input('Loan Amount', min_value=0, value=10000)
+    loan_intent = st.selectbox('Loan Intent', ['PERSONAL', 'EDUCATION', 'MEDICAL', 'VENTURE', 'HOMEIMPROVEMENT', 'DEBTCONSOLIDATION'])
+    loan_int_rate = st.number_input('Interest Rate (%)', min_value=0.0, max_value=100.0, value=10.0)
+    loan_percent_income = st.number_input('Loan Percent Income', min_value=0.0, max_value=1.0, value=0.2)
+    cb_person_cred_hist_length = st.number_input('Credit History Length (years)', min_value=0, max_value=100, value=5)
+    credit_score = st.number_input('Credit Score', min_value=0, max_value=1000, value=700)
+    previous_loan_defaults_on_file = st.selectbox('Previous Loan Defaults', ['No', 'Yes'])
+
+# Show all input values in a row
+input_data = {
+    'person_age': person_age,
+    'person_gender': person_gender,
+    'person_education': person_education,
+    'person_income': person_income,
+    'person_emp_exp': person_emp_exp,
+    'person_home_ownership': person_home_ownership,
+    'loan_amnt': loan_amnt,
+    'loan_intent': loan_intent,
+    'loan_int_rate': loan_int_rate,
+    'loan_percent_income': loan_percent_income,
+    'cb_person_cred_hist_length': cb_person_cred_hist_length,
+    'credit_score': credit_score,
+    'previous_loan_defaults_on_file': previous_loan_defaults_on_file
+}
+st.subheader('Input Values')
+st.table(pd.DataFrame([input_data]))
+
+# Checkbox for transformed data
+show_transformed = st.checkbox('Show transformed data (row below)')
+
+# Preprocessing
+# 1. Encode categorical variables
+# person_gender: Label Encoding (female=0, male=1)
+gender_map = {'female': 0, 'male': 1}
+person_gender_enc = gender_map[person_gender]
+
+# person_education: Ordinal Encoding
+education_order = ['High School', 'Associate', 'Bachelor', 'Master', 'Doctorate']
+person_education_enc = education_order.index(person_education)
+
+# previous_loan_defaults_on_file: Label Encoding (No=0, Yes=1)
+defaults_map = {'No': 0, 'Yes': 1}
+previous_loan_defaults_enc = defaults_map[previous_loan_defaults_on_file]
+
+# person_home_ownership: One-hot
+home_ownerships = ['MORTGAGE', 'OTHER', 'OWN', 'RENT']
+home_ownership_ohe = [1 if person_home_ownership == ho else 0 for ho in home_ownerships]
+
+# loan_intent: One-hot
+loan_intents = ['DEBTCONSOLIDATION', 'EDUCATION', 'HOMEIMPROVEMENT', 'MEDICAL', 'PERSONAL', 'VENTURE']
+loan_intent_ohe = [1 if loan_intent == li else 0 for li in loan_intents]
+
+# 2. Prepare continuous features for scaling (do NOT include person_age)
+continuous_features = [
+    person_income, person_emp_exp, loan_amnt, loan_int_rate, loan_percent_income,
+    cb_person_cred_hist_length, credit_score
+]
+
+# 3. Scale continuous features
+scaled_continuous = scaler.transform(np.array([continuous_features]))[0]
+
+# 4. Quantile transform the scaled person_income
+person_income_scaled = scaled_continuous[0]
+person_income_trans = qt.transform(np.array([[person_income_scaled]]))[0, 0]
+
+# After preprocessing and before prediction
+if show_transformed:
+    transformed_data = {
+        'person_age (raw)': person_age,
+        'person_income (scaled)': scaled_continuous[0],
+        'person_income (scaled + quantile)': person_income_trans,
+        'person_emp_exp (scaled)': scaled_continuous[1],
+        'loan_amnt (scaled)': scaled_continuous[2],
+        'loan_int_rate (scaled)': scaled_continuous[3],
+        'loan_percent_income (scaled)': scaled_continuous[4],
+        'cb_person_cred_hist_length (scaled)': scaled_continuous[5],
+        'credit_score (scaled)': scaled_continuous[6],
     }
+    st.subheader('Transformed Values')
+    st.table(pd.DataFrame([transformed_data]))
 
-artifacts = load_artifacts()
-xgboost_model = artifacts['xgboost']
-pyCaret = artifacts['pycaret']
-print("Model expects features:", pyCaret.feature_names_)
-# scaler = artifacts['scaler']
-# qt = artifacts['qt']
+# 5. Assemble the final feature vector in the correct order
+input_vector = [
+    person_age,                  # person_age (raw, not scaled)
+    person_gender_enc,           # person_gender
+    person_education_enc,        # person_education
+    person_income_trans,         # person_income (scaled, then quantile transformed)
+    scaled_continuous[1],        # person_emp_exp
+    scaled_continuous[2],        # loan_amnt
+    scaled_continuous[3],        # loan_int_rate
+    scaled_continuous[4],        # loan_percent_income
+    scaled_continuous[5],        # cb_person_cred_hist_length
+    scaled_continuous[6],        # credit_score
+    previous_loan_defaults_enc,  # previous_loan_defaults_on_file
+    *home_ownership_ohe,         # person_home_ownership_* (4)
+    *loan_intent_ohe             # loan_intent_* (6)
+]
 
-def main():
-    st.title("Loan Approval Prediction System")
-    st.write("This application predicts whether a loan application will be approved or rejected.")
+# 6. Pad/cut to match feature_names length (should be 21)
+input_vector = input_vector[:len(feature_names)]
 
-    with st.sidebar:
-        st.header("Applicant Information")
-        
-        # Personal Information
-        st.subheader("Personal Details")
-        person_age = st.number_input("Age", min_value=18, max_value=100, value=30)
-        person_gender = st.selectbox("Gender", ["Female", "Male"])
-        person_education = st.selectbox(
-            "Education Level", 
-            ["High School", "Associate", "Bachelor", "Master", "Doctorate"]
-        )
-        
-        # Financial Information
-        st.subheader("Financial Details")
-        person_income = st.number_input("Annual Income ($)", min_value=0, value=500000)
-        person_emp_exp = st.number_input("Employment Experience (years)", min_value=0, value=5)
-        credit_score = st.slider("Credit Score", 300, 850, 700)
-        cb_person_cred_hist_length = st.number_input("Credit History Length (years)", min_value=0, value=5)
-        previous_loan_defaults_on_file = st.selectbox("Previous Loan Defaults", ["No", "Yes"])
-        
-        # Loan Information
-        st.subheader("Loan Details")
-        loan_amnt = st.number_input("Loan Amount ($)", min_value=100, value=20000)
-        loan_int_rate = st.slider("Interest Rate (%)", 0.0, 20.0, 7.5)
-        loan_percent_income = st.slider("Loan Amount/Income Ratio", 0.0, 1.0, 0.3)
-        loan_intent = st.selectbox(
-            "Loan Purpose", 
-            ["DEBTCONSOLIDATION", "EDUCATION", "HOMEIMPROVEMENT", 
-             "MEDICAL", "PERSONAL", "VENTURE"]
-        )
-        person_home_ownership = st.selectbox(
-            "Home Ownership", 
-            ["MORTGAGE", "OTHER", "OWN", "RENT"]
-        )
-    
-    # Create input dataframe with correct column order
-    input_data = pd.DataFrame(index=[0], columns=[
-        'person_age', 'person_gender', 'person_education', 'person_income',
-        'person_emp_exp', 'loan_amnt', 'loan_int_rate', 'loan_percent_income',
-        'cb_person_cred_hist_length', 'credit_score',
-        'previous_loan_defaults_on_file', 'person_home_ownership_MORTGAGE',
-        'person_home_ownership_OTHER', 'person_home_ownership_OWN',
-        'person_home_ownership_RENT', 'loan_intent_DEBTCONSOLIDATION',
-        'loan_intent_EDUCATION', 'loan_intent_HOMEIMPROVEMENT',
-        'loan_intent_MEDICAL', 'loan_intent_PERSONAL', 'loan_intent_VENTURE'
-    ])
-    
-    # Fill in the values - now they'll show up properly
-    input_data['person_age'] = person_age
-    input_data['person_gender'] = 1 if person_gender == "Male" else 0
-    input_data['person_education'] = [
-        0 if person_education == "High School" 
-        else 1 if person_education == "Associate" 
-        else 2 if person_education == "Bachelor" 
-        else 3 if person_education == "Master" 
-        else 4
-    ][0]
-    input_data['person_income'] = person_income
-    input_data['person_emp_exp'] = person_emp_exp
-    input_data['loan_amnt'] = loan_amnt
-    input_data['loan_int_rate'] = loan_int_rate
-    input_data['loan_percent_income'] = loan_percent_income
-    input_data['cb_person_cred_hist_length'] = cb_person_cred_hist_length
-    input_data['credit_score'] = credit_score
-    input_data['previous_loan_defaults_on_file'] = 1 if previous_loan_defaults_on_file == "Yes" else 0
-    
-    # Properly handle one-hot encoded columns
-    for col in ['MORTGAGE', 'OTHER', 'OWN', 'RENT']:
-        input_data[f'person_home_ownership_{col}'] = 1 if person_home_ownership == col else 0
-    
-    for col in ['DEBTCONSOLIDATION', 'EDUCATION', 'HOMEIMPROVEMENT', 'MEDICAL', 'PERSONAL', 'VENTURE']:
-        input_data[f'loan_intent_{col}'] = 1 if loan_intent == col else 0
-
-        
-    continuous_cols = ['person_income', 'person_emp_exp', 'loan_amnt', 
-                 'loan_int_rate', 'loan_percent_income', 
-                 'cb_person_cred_hist_length', 'credit_score']
-
-    try:
-
-        # At app startup, load representative training data to fit scalers
-        train_data = pd.read_csv('./datasets/loan2.csv')
-        train_data = train_data.drop('Unnamed: 0', axis=1)
-        original_values = input_data.copy()
-# Fit scalers once
-        scaler = StandardScaler().fit(train_data[continuous_cols])
-        qt = QuantileTransformer(output_distribution='normal').fit(train_data[['person_income']])
-
-# Then transform new inputs using these fitted scalers
-        input_data[continuous_cols] = scaler.transform(input_data[continuous_cols])
-        input_data['person_income'] = qt.transform(input_data[['person_income']])
-    
-    # Debug output
-        # print("\nOriginal Values:")
-        # print(original_values.to_string())
-        # print("\nTransformed Values:")
-        # print(input_data[continuous_cols].to_string())
-    
-        if st.checkbox("Show raw input data"):
-            st.write("Original Values:")
-            st.dataframe(original_values)
-            st.write("Transformed Values:")
-            st.dataframe(input_data[continuous_cols].style.format("{:.4f}"))
-        
-    except Exception as e:
-        st.error(f"Transformation error: {str(e)}")
-        return
-    
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-
-    with col1:  
-        if st.button("Predict with XGBoost", help="Make prediction using XGBoost model"):
-            try:
-                prediction = xgboost_model.predict(input_data)[0]
-                prediction_proba = xgboost_model.predict_proba(input_data)[0]
-            
-                st.subheader("XGBoost Prediction Results")
-                if prediction == 1:
-                    st.success("✅ Loan Approved")
-                else:
-                    st.error("❌ Loan Rejected")
-            
-                st.metric("Approval Probability", f"{prediction_proba[1]*100:.2f}%")
-                st.metric("Rejection Probability", f"{prediction_proba[0]*100:.2f}%")
-            
-            except Exception as e:
-                st.error(f"XGBoost prediction error: {str(e)}")
-
-    with col2:
-        if st.button("Predict with PyCaret", help="Make prediction using PyCaret model"):
-            try:
-                prediction = pyCaret.predict(input_data)[0]
-                prediction_proba = pyCaret.predict_proba(input_data)[0]
-            
-                st.subheader("PyCaret Prediction Results")
-                if prediction == 1:
-                    st.success("✅ Loan Approved")
-                else:
-                    st.error("❌ Loan Rejected")
-        
-            
-                st.metric("Approval Probability", f"{prediction_proba[1]*100:.2f}%")
-                st.metric("Rejection Probability", f"{prediction_proba[0]*100:.2f}%")
-            
-            except Exception as e:
-                st.error(f"PyCaret prediction error: {str(e)}")
-
-if __name__ == "__main__":
-    main()
-
-
+# Prediction
+if st.button('Predict Loan Approval'):
+    pred = model.predict(np.array([input_vector]))[0]
+    st.subheader('Prediction:')
+    if pred == 1:
+        st.success('Loan Approved!')
+    else:
+        st.error('Loan Not Approved.')
